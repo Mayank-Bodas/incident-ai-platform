@@ -1,0 +1,320 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+        WHY Spring Boot parent?
+        The parent POM manages ALL dependency versions for us — no version conflicts.
+        This is called "Bill of Materials (BOM)" pattern. Real companies use this
+        to ensure consistent versions across hundreds of microservices.
+    -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.3.5</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.incidentplatform</groupId>
+    <artifactId>incident-platform</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>incident-platform</name>
+    <description>AI-Powered Incident Management Platform</description>
+
+    <properties>
+        <!--
+            WHY Java 17?
+            You have Java 17 installed. Java 21 has Virtual Threads (Project Loom)
+            which is a major interview topic — upgrade when possible.
+            Virtual Threads let you handle 1M+ concurrent requests without reactive programming.
+        -->
+        <java.version>17</java.version>
+        <langchain4j.version>0.35.0</langchain4j.version>
+        <testcontainers.version>1.20.1</testcontainers.version>
+        <springdoc.version>2.6.0</springdoc.version>
+        <jjwt.version>0.12.6</jjwt.version>
+    </properties>
+
+    <dependencies>
+
+        <!-- ==================== CORE WEB ==================== -->
+        <!--
+            WHY Spring Web?
+            Gives us REST controllers, embedded Tomcat, Jackson for JSON.
+            Under the hood: DispatcherServlet routes requests to @Controller methods.
+            Interview: "How does Spring MVC handle a request?" → DispatcherServlet → HandlerMapping → Controller
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- ==================== DATABASE ==================== -->
+        <!--
+            WHY Spring Data JPA?
+            JPA (Java Persistence API) is the standard ORM specification.
+            Hibernate is the implementation. Spring Data JPA adds the Repository pattern on top.
+            Interview: "What's the difference between JPA, Hibernate, and Spring Data JPA?"
+            → JPA = spec, Hibernate = implementation, Spring Data = abstraction layer
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+
+        <!-- PostgreSQL JDBC Driver — connects JVM to PostgreSQL -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!--
+            WHY Flyway?
+            Database migrations as code. Every schema change is versioned, tracked, and repeatable.
+            Without this: "it worked on my machine" DB schema drift.
+            Real companies: Flyway/Liquibase are standard — schema is in Git, not in someone's head.
+            Interview: "How do you handle database schema changes in production?" → Flyway migrations
+        -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+
+        <!-- ==================== VALIDATION ==================== -->
+        <!--
+            WHY? Never trust client input. @Valid + bean validation annotations
+            give us declarative validation without if-else chains.
+            SOLID: Single Responsibility — validation logic stays in the DTO, not the service.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!-- ==================== SECURITY ==================== -->
+        <!--
+            WHY Spring Security?
+            Industry-standard security framework. Provides filter chain, authentication,
+            authorization. We'll add JWT on top of it.
+            Interview: "How does Spring Security work?" → SecurityFilterChain intercepts every request
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
+        <!-- JWT — for stateless authentication tokens -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+            <version>${jjwt.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <version>${jjwt.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+            <version>${jjwt.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- ==================== MESSAGING (KAFKA) ==================== -->
+        <!--
+            WHY Kafka?
+            Event-driven architecture backbone. Kafka gives us:
+            - Durability (messages survive restarts)
+            - Replay (reprocess old events)
+            - Decoupling (alert-service doesn't know incident-service exists)
+            Interview: "Why Kafka over RabbitMQ?" → Kafka = log/stream, Rabbit = queue/routing
+        -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+        </dependency>
+
+        <!-- ==================== CACHING (REDIS) ==================== -->
+        <!--
+            WHY Redis?
+            L2 distributed cache. Reduces DB load for hot data (active incidents).
+            Spring Cache abstraction = swap Redis for another cache with config change.
+            Interview: "What cache strategies do you know?" → Cache-Aside, Write-Through, Write-Behind, Read-Through
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-cache</artifactId>
+        </dependency>
+
+        <!-- ==================== SEARCH (ELASTICSEARCH) ==================== -->
+        <!--
+            WHY Elasticsearch?
+            Full-text search that PostgreSQL LIKE queries can't match at scale.
+            Inverted index enables sub-second search across millions of log lines.
+            Interview: "How does Elasticsearch achieve fast full-text search?" → Inverted index + sharding
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-elasticsearch</artifactId>
+        </dependency>
+
+        <!-- ==================== AI (LangChain4j) ==================== -->
+        <!--
+            WHY LangChain4j over raw API calls?
+            - Abstracts LLM providers (swap OpenAI → Ollama with config)
+            - Built-in agent patterns (ReAct, Chain-of-Thought)
+            - RAG pipeline tools (document loaders, splitters, embedding stores)
+            Interview: "How did you implement the agent pattern?" → Explain ReAct: Reason + Act
+        -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-spring-boot-starter</artifactId>
+            <version>${langchain4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-open-ai-spring-boot-starter</artifactId>
+            <version>${langchain4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-ollama-spring-boot-starter</artifactId>
+            <version>${langchain4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-pgvector</artifactId>
+            <version>${langchain4j.version}</version>
+        </dependency>
+
+        <!-- ==================== OBSERVABILITY ==================== -->
+        <!--
+            WHY Actuator?
+            Exposes operational endpoints: /health, /metrics, /info, /prometheus
+            Real companies: every service has health checks — Kubernetes liveness/readiness probes use them.
+            Interview: "How do you implement health checks in Spring Boot?" → Spring Actuator
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!--
+            WHY Micrometer + Prometheus?
+            Micrometer = vendor-neutral metrics facade (like SLF4J for metrics)
+            Prometheus scrapes /actuator/prometheus and stores time-series data
+            Grafana visualizes it. This is the standard observability stack.
+        -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+
+        <!-- ==================== API DOCUMENTATION ==================== -->
+        <!--
+            WHY Springdoc (OpenAPI 3)?
+            Auto-generates Swagger UI from your @RestController annotations.
+            Interviewers and recruiters can test your API without Postman.
+            Interview: "How do you document your APIs?" → OpenAPI 3 spec, Swagger UI
+        -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>${springdoc.version}</version>
+        </dependency>
+
+        <!-- ==================== UTILITIES ==================== -->
+        <!--
+            WHY Lombok?
+            Eliminates boilerplate: @Getter, @Setter, @Builder, @RequiredArgsConstructor
+            Saves hundreds of lines. Used in virtually every Java company.
+            Interview: "Any concerns with Lombok?" → Debugging, IDE dependency, generated code hidden
+        -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Jackson for JSON serialization of Java 8+ types (LocalDateTime, UUID) -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+        </dependency>
+
+        <!-- ==================== TESTING ==================== -->
+        <!--
+            WHY Testcontainers?
+            Spins up REAL Docker containers (PostgreSQL, Kafka, Redis) for integration tests.
+            No mocking. No "works on my machine" problem.
+            Interview: "How do you test Kafka consumers?" → Testcontainers with embedded Kafka
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${testcontainers.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>${testcontainers.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>kafka</artifactId>
+            <version>${testcontainers.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+                WHY Spring Boot Maven Plugin?
+                Creates an executable "fat JAR" — all dependencies bundled inside.
+                Run with: java -jar incident-platform.jar (no classpath setup needed)
+                This is what gets put in Docker images.
+            -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

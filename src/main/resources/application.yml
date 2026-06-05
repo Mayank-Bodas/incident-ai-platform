@@ -1,0 +1,222 @@
+spring:
+  application:
+    name: incident-platform
+    # WHY set application name?
+    # Used by: Spring Actuator (/actuator/info), distributed tracing (trace headers),
+    # Kubernetes service discovery, log correlation. Always set this.
+
+  # ==================== DATABASE ====================
+  datasource:
+    url: jdbc:postgresql://localhost:5432/incident_db
+    username: incident_user
+    password: incident_pass
+    driver-class-name: org.postgresql.Driver
+
+    # WHY HikariCP? It's the fastest JDBC connection pool.
+    # Spring Boot auto-configures Hikari — we just tune it.
+    hikari:
+      pool-name: IncidentPlatformPool
+      maximum-pool-size: 20
+      # WHY 20? Rule of thumb: cores * 2 + effective_spindle_count
+      # For M1 with 8 cores and SSD: 8 * 2 + 1 ≈ 17. We use 20.
+      # Too many connections = DB overwhelmed. Too few = app waits.
+      # Interview: "How do you size a connection pool?" → This formula.
+      minimum-idle: 5
+      connection-timeout: 30000
+      # 30 seconds max wait for a connection before throwing exception
+      idle-timeout: 600000
+      # Return idle connections to pool after 10 minutes
+      max-lifetime: 1800000
+      # Connections live max 30 minutes (prevents stale connections)
+
+  # ==================== JPA ====================
+  jpa:
+    hibernate:
+      ddl-auto: validate
+      # WHY validate, not create-drop or update?
+      # CRITICAL: Never use create-drop in production — it DROPS your tables.
+      # Never use update — it misses index changes, constraint changes.
+      # validate = Hibernate checks that entities match DB schema. If mismatch: fail fast.
+      # Flyway manages the schema. Hibernate just validates it matches.
+      # Interview: "What ddl-auto do you use in production?" → validate (or none)
+    show-sql: false
+    # WHY false? Logging every SQL in production = performance hit + log spam.
+    # Use 'true' only during development to debug N+1 queries.
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc:
+          batch_size: 50
+          # WHY batch_size?
+          # Batch 50 INSERT statements into one DB round-trip.
+          # Without batching: 1000 INSERTs = 1000 round-trips.
+          # With batching: 1000 INSERTs = 20 round-trips. 50x faster.
+          # Interview: "How do you optimize bulk inserts with JPA?" → Batch inserts
+        order_inserts: true
+        order_updates: true
+        # These two enable Hibernate to reorder statements to maximize batching.
+
+  # ==================== FLYWAY ====================
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    # WHY baseline-on-migrate?
+    # If the DB already has tables (existing project), this tells Flyway:
+    # "Treat the current DB as V1 baseline, apply only newer migrations."
+    # Without this: Flyway errors on existing DB.
+
+  # ==================== KAFKA ====================
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      # WHY JsonSerializer?
+      # Serialize Java objects to JSON bytes. Consumer deserializes back to Java.
+      # Alternative: Avro with Schema Registry — type-safe but more infrastructure.
+      # Interview: "Avro vs JSON for Kafka?" → Avro = schema enforcement + compact. JSON = flexible.
+      acks: all
+      # WHY acks=all?
+      # acks=0: fire and forget (no guarantee)
+      # acks=1: leader acknowledges (can lose if leader fails before replication)
+      # acks=all: all replicas acknowledge (strongest guarantee)
+      # For incident alerts: we can't afford to lose data. acks=all.
+      retries: 3
+      properties:
+        enable.idempotence: true
+        # WHY enable.idempotence?
+        # With retries, producer might send duplicate messages on network failure.
+        # Idempotent producer: Kafka assigns sequence numbers, deduplicates on broker.
+        # Exactly-once semantics at producer level.
+        # Interview: "How do you ensure exactly-once delivery in Kafka?" → Producer idempotence + consumer deduplication
+    consumer:
+      group-id: incident-platform-group
+      auto-offset-reset: earliest
+      # WHY earliest?
+      # When a new consumer group starts, process from beginning of topic.
+      # Alternative: latest = only new messages. We use earliest for replay capability.
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.incidentplatform.*"
+        # SECURITY: Only deserialize classes from our package. Prevents deserialization attacks.
+    listener:
+      ack-mode: MANUAL_IMMEDIATE
+      # WHY MANUAL_IMMEDIATE?
+      # Don't auto-commit offset after receiving message.
+      # We manually commit AFTER successful processing.
+      # If we commit before processing and then crash: message is lost.
+      # Interview: "How do you prevent message loss in Kafka consumers?" → Manual ack after processing
+
+  # ==================== REDIS ====================
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password: redis_pass
+      lettuce:
+        pool:
+          max-active: 20
+          max-idle: 10
+          min-idle: 5
+          # WHY Lettuce over Jedis?
+          # Lettuce is non-blocking (uses Netty). Jedis is blocking (one thread per connection).
+          # Spring Boot 3 defaults to Lettuce. Better for high-concurrency applications.
+          # Interview: "Lettuce vs Jedis?" → Lettuce = async/reactive capable
+
+    # ==================== ELASTICSEARCH ====================
+    elasticsearch:
+      uris: http://localhost:9200
+      # In production: add username/password and use HTTPS
+
+  # ==================== CACHE ====================
+  cache:
+    type: redis
+    redis:
+      time-to-live: 3600000
+      # Default TTL: 1 hour (3,600,000 milliseconds)
+      # Per-cache TTLs configured in RedisConfig.java
+      cache-null-values: false
+      # WHY false? Don't cache null results. If service returns null (not found),
+      # we want to hit DB on next request (might have been created since).
+
+# ==================== SERVER ====================
+server:
+  port: 8080
+  error:
+    include-message: always
+    include-binding-errors: always
+    # WHY include-message?
+    # Spring Boot default hides error messages. We want them in dev.
+    # In production: set include-message: never (don't leak internal errors to clients).
+
+# ==================== ACTUATOR (OBSERVABILITY) ====================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,env,flyway
+        # WHY expose prometheus?
+        # /actuator/prometheus exposes all Micrometer metrics in Prometheus format.
+        # Prometheus server scrapes this endpoint every 15 seconds.
+        # In production: secure this endpoint (don't expose to public internet).
+  endpoint:
+    health:
+      show-details: always
+      # WHY show-details always in dev?
+      # Shows DB connection status, disk space, Redis ping etc.
+      # In production: show-details: when_authorized
+  metrics:
+    tags:
+      application: ${spring.application.name}
+      # Tag all metrics with app name — needed when multiple services report to same Prometheus
+
+# ==================== API DOCUMENTATION ====================
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    display-request-duration: true
+    # Shows API response times in Swagger UI — useful for performance testing
+  info:
+    title: Incident Management Platform API
+    version: 1.0.0
+    description: AI-Powered Incident Investigation and Management
+
+# ==================== LANGCHAIN4J / AI ====================
+langchain4j:
+  ollama:
+    chat-model:
+      base-url: http://localhost:11434
+      model-name: llama3.2
+      # WHY Ollama?
+      # Free, runs locally on M1 Mac. No API costs during development.
+      # Production: swap to OpenAI GPT-4o or Anthropic Claude via config change.
+      # The abstraction layer (LangChain4j) makes this seamless.
+      temperature: 0.1
+      # WHY temperature 0.1 (not 0.7)?
+      # Temperature controls randomness. 0 = deterministic, 1 = creative.
+      # For RCA and recommendations: we want precise, repeatable answers.
+      # For creative tasks: use higher temperature.
+      # Interview: "What is LLM temperature?" → Controls output randomness
+      timeout: 120s
+
+# ==================== LOGGING ====================
+logging:
+  level:
+    root: INFO
+    com.incidentplatform: DEBUG
+    # Our code: DEBUG level in dev. In production: set to INFO via env variable.
+    org.springframework.security: INFO
+    org.hibernate.SQL: INFO
+    # Set to DEBUG to see all SQL queries — useful for N+1 debugging
+    org.hibernate.type.descriptor.sql: TRACE
+    # Set to TRACE to see SQL parameter values — extremely verbose, only when debugging
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    # WHY structured log pattern?
+    # Timestamp + thread + level + logger = correlation in distributed logs.
+    # In production: use JSON logging (logstash-logback-encoder) for Elasticsearch ingestion.
