@@ -15,7 +15,7 @@ public interface AlertRepository extends JpaRepository<AlertEntity, UUID> {
     // Alert deduplication: if same fingerprint seen in last 10 minutes, skip incident creation.
     // fingerprint = SHA-256(source + service + alertType)
     // createdAt > NOW() - 10 minutes = within deduplication window
-    Optional<AlertEntity> findByFingerprintAndCreatedAtAfter(String fingerprint, LocalDateTime after);
+    boolean existsByFingerprintAndCreatedAtAfter(String fingerprint, LocalDateTime after);
 
     long countByIncidentId(UUID incidentId);
 }

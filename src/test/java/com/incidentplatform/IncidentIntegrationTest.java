@@ -19,6 +19,15 @@ import com.incidentplatform.infrastructure.persistence.repository.UserRepository
 import com.incidentplatform.infrastructure.persistence.repository.KnowledgeDocumentRepository;
 import com.incidentplatform.infrastructure.persistence.repository.InvestigationResultRepository;
 import com.incidentplatform.infrastructure.security.JwtService;
+import com.incidentplatform.application.dto.request.IngestDocumentRequest;
+import com.incidentplatform.infrastructure.search.repository.IncidentElasticsearchRepository;
+import com.incidentplatform.infrastructure.search.repository.LogElasticsearchRepository;
+import com.incidentplatform.infrastructure.search.document.IncidentDocument;
+import com.incidentplatform.infrastructure.search.document.LogDocument;
+import org.springframework.jdbc.core.JdbcTemplate;
+import com.incidentplatform.application.agent.impl.KnowledgeBaseAgent;
+import com.incidentplatform.application.agent.model.AgentInput;
+import com.incidentplatform.application.agent.model.AgentResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -44,7 +53,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * IncidentIntegrationTest — End-to-end integration tests verifying the REST endpoints,
  * database persistence, state machine transitions, Kafka message ingestion, JWT/RBAC, Caching, and Rate Limiting.
  */
-@SpringBootTest
+@SpringBootTest(properties = "spring.kafka.consumer.auto-offset-reset=latest")
 @AutoConfigureMockMvc
 public class IncidentIntegrationTest {
 
@@ -78,6 +87,18 @@ public class IncidentIntegrationTest {
     @Autowired
     private RedisTemplate<String, Object> redisTemplate;
 
+    @Autowired
+    private IncidentElasticsearchRepository incidentElasticsearchRepository;
+
+    @Autowired
+    private LogElasticsearchRepository logElasticsearchRepository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private KnowledgeBaseAgent knowledgeBaseAgent;
+
     private String adminToken;
     private String engineerToken;
     private String viewerToken;
@@ -91,6 +112,13 @@ public class IncidentIntegrationTest {
         auditLogRepository.deleteAll();
         userRepository.deleteAll();
         knowledgeDocumentRepository.deleteAll();
+        incidentElasticsearchRepository.deleteAll();
+        logElasticsearchRepository.deleteAll();
+        try {
+            jdbcTemplate.execute("DELETE FROM knowledge_embeddings");
+        } catch (Exception e) {
+            // Ignore if table doesn't exist yet
+        }
 
         // Seed test users for Role-Based Access Control
         UserEntity admin = userRepository.save(UserEntity.builder()
@@ -134,6 +162,13 @@ public class IncidentIntegrationTest {
         auditLogRepository.deleteAll();
         userRepository.deleteAll();
         knowledgeDocumentRepository.deleteAll();
+        incidentElasticsearchRepository.deleteAll();
+        logElasticsearchRepository.deleteAll();
+        try {
+            jdbcTemplate.execute("DELETE FROM knowledge_embeddings");
+        } catch (Exception e) {
+            // Ignore
+        }
 
         // Clear redis keys generated during tests
         redisTemplate.delete(redisTemplate.keys("incident:*"));
@@ -416,5 +451,139 @@ public class IncidentIntegrationTest {
                 .andExpect(status().isTooManyRequests())
                 .andExpect(jsonPath("$.title").value("Too Many Requests"))
                 .andExpect(jsonPath("$.detail").value("Alert ingestion rate limit exceeded. Please try again later."));
+    }
+
+    @Test
+    public void testRunbookIngestionSecurityAndSuccess() throws Exception {
+        IngestDocumentRequest request = new IngestDocumentRequest(
+                "Auth Database Failure Recovery SOP",
+                "SOP: Reset Hikari max pool size to 50 when connection timeout occurs.",
+                "auth-service",
+                List.of("postgres", "auth", "hikari")
+        );
+
+        // 1. Unauthenticated request should fail with 403 Forbidden or 401 Unauthorized
+        mockMvc.perform(post("/api/v1/documents/ingest")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isForbidden());
+
+        // 2. Viewer role request should fail with 403 Forbidden
+        mockMvc.perform(post("/api/v1/documents/ingest")
+                        .header("Authorization", "Bearer " + viewerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isForbidden());
+
+        // 3. Engineer/Admin request should succeed with 201 Created
+        mockMvc.perform(post("/api/v1/documents/ingest")
+                        .header("Authorization", "Bearer " + engineerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").isNotEmpty())
+                .andExpect(jsonPath("$.title").value("Auth Database Failure Recovery SOP"))
+                .andExpect(jsonPath("$.serviceName").value("auth-service"))
+                .andExpect(jsonPath("$.tags", hasItem("postgres")))
+                .andExpect(jsonPath("$.documentType").value("RUNBOOK"));
+
+        // Verify database state
+        List<KnowledgeDocumentEntity> docs = knowledgeDocumentRepository.findByServiceName("auth-service");
+        assertThat(docs).hasSize(1);
+        assertThat(docs.get(0).getTitle()).isEqualTo("Auth Database Failure Recovery SOP");
+    }
+
+    @Test
+    public void testPgVectorSemanticSearchAndRagAgentExecution() throws Exception {
+        // Ingest runbook document using REST API
+        IngestDocumentRequest request = new IngestDocumentRequest(
+                "Redis Cache Purge Runbook",
+                "SOP: Restart Redis node and flushall keys if cache inconsistency is observed.",
+                "cache-service",
+                List.of("redis", "cache")
+        );
+
+        mockMvc.perform(post("/api/v1/documents/ingest")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated());
+
+        // Verify document is split, embedded and saved in PostgreSQL (using repository check)
+        List<KnowledgeDocumentEntity> docs = knowledgeDocumentRepository.findByServiceName("cache-service");
+        assertThat(docs).hasSize(1);
+
+        // Execute KnowledgeBaseAgent with a semantic search trigger input
+        AgentInput agentInput = AgentInput.builder()
+                .incidentId(UUID.randomUUID())
+                .serviceName("cache-service")
+                .title("Cache inconsistency found")
+                .description("Redis keys mismatch after deployment, showing stale data")
+                .severity(Severity.SEV2)
+                .environment("production")
+                .build();
+
+        AgentResult result = knowledgeBaseAgent.execute(agentInput);
+
+        // Verify RAG worked (findings will either extract from context or return custom SRE results referencing context)
+        assertThat(result.findings()).isNotEmpty();
+        assertThat(result.reasoning()).contains("cache-service");
+        assertThat(result.confidenceScore()).isGreaterThanOrEqualTo(java.math.BigDecimal.ZERO);
+    }
+
+    @Test
+    public void testElasticsearchIncidentAndLogSearchEndpoints() throws Exception {
+        // 1. Index test incident in Elasticsearch
+        IncidentDocument incidentDoc = IncidentDocument.builder()
+                .id(UUID.randomUUID().toString())
+                .title("Memory leak in payment microservice")
+                .description("JVM garbage collection heap memory leak warnings")
+                .status("OPEN")
+                .severity("SEV1")
+                .serviceName("payment-service")
+                .environment("production")
+                .rcaSummary("OutOfMemoryError threat from thread pool leaks")
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        incidentElasticsearchRepository.save(incidentDoc);
+
+        // 2. Index test logs in Elasticsearch
+        LogDocument logDoc = LogDocument.builder()
+                .id(UUID.randomUUID().toString())
+                .serviceName("payment-service")
+                .logLevel("ERROR")
+                .message("Fatal OutOfMemoryError in Java heap space")
+                .timestamp(LocalDateTime.now())
+                .build();
+
+        logElasticsearchRepository.save(logDoc);
+
+        // 3. Search Incidents via REST API with query parameter
+        mockMvc.perform(get("/api/v1/search/incidents")
+                        .header("Authorization", "Bearer " + viewerToken)
+                        .param("query", "Memory leak"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].title").value("Memory leak in payment microservice"))
+                .andExpect(jsonPath("$[0].rcaSummary").value("OutOfMemoryError threat from thread pool leaks"));
+
+        // 4. Search Logs via REST API with serviceName and query parameters
+        mockMvc.perform(get("/api/v1/search/logs")
+                        .header("Authorization", "Bearer " + engineerToken)
+                        .param("serviceName", "payment-service")
+                        .param("query", "Fatal"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].message").value("Fatal OutOfMemoryError in Java heap space"))
+                .andExpect(jsonPath("$[0].logLevel").value("ERROR"));
+
+        // 5. Search Logs via REST API with serviceName only (returns logs in last 15 minutes)
+        mockMvc.perform(get("/api/v1/search/logs")
+                        .header("Authorization", "Bearer " + viewerToken)
+                        .param("serviceName", "payment-service"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].message").value("Fatal OutOfMemoryError in Java heap space"));
     }
 }

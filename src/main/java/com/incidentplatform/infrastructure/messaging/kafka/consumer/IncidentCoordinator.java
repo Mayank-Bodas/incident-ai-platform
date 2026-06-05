@@ -134,8 +134,7 @@ public class IncidentCoordinator {
             // This is the "idempotent consumer" pattern — safe to process same message twice.
             LocalDateTime deduplicationWindow = LocalDateTime.now().minusMinutes(10);
             boolean isDuplicate = alertRepository
-                    .findByFingerprintAndCreatedAtAfter(fingerprint, deduplicationWindow)
-                    .isPresent();
+                    .existsByFingerprintAndCreatedAtAfter(fingerprint, deduplicationWindow);
 
             if (isDuplicate) {
                 log.info("Duplicate alert detected in consumer (fingerprint={}), skipping. correlationId={}",

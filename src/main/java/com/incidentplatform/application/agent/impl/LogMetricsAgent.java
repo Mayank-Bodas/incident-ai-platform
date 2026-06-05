@@ -3,15 +3,20 @@ package com.incidentplatform.application.agent.impl;
 import com.incidentplatform.application.agent.IncidentAgent;
 import com.incidentplatform.application.agent.model.AgentInput;
 import com.incidentplatform.application.agent.model.AgentResult;
+import com.incidentplatform.infrastructure.search.document.LogDocument;
+import com.incidentplatform.infrastructure.search.repository.LogElasticsearchRepository;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.stream.Collectors;
 
 /**
- * LogMetricsAgent — Analyzes simulated or retrieved logs and metrics for error traces and resource anomalies.
+ * LogMetricsAgent — Gathers and analyzes service logs from Elasticsearch to identify error traces and system anomalies.
  */
 @Component
 @Slf4j
@@ -19,6 +24,7 @@ import java.math.BigDecimal;
 public class LogMetricsAgent implements IncidentAgent {
 
     private final ChatLanguageModel chatLanguageModel;
+    private final LogElasticsearchRepository logElasticsearchRepository;
 
     @Override
     public String getAgentType() {
@@ -27,10 +33,28 @@ public class LogMetricsAgent implements IncidentAgent {
 
     @Override
     public AgentResult execute(AgentInput input) {
-        log.info("Executing LogMetricsAgent for incident ID: {}", input.incidentId());
+        log.info("Executing LogMetricsAgent (Elasticsearch query) for incident ID: {}", input.incidentId());
         
-        String logsToAnalyze = input.logsContext();
-        if (logsToAnalyze == null || logsToAnalyze.trim().isEmpty()) {
+        // 1. Retrieve logs from the last 15 minutes from Elasticsearch
+        LocalDateTime fifteenMinutesAgo = LocalDateTime.now().minusMinutes(15);
+        String logsToAnalyze = "";
+
+        try {
+            List<LogDocument> logs = logElasticsearchRepository.findByServiceNameAndTimestampAfter(
+                    input.serviceName(), fifteenMinutesAgo);
+            
+            if (!logs.isEmpty()) {
+                logsToAnalyze = logs.stream()
+                        .map(l -> String.format("[%s] [%s] - %s", l.getTimestamp(), l.getLogLevel(), l.getMessage()))
+                        .collect(Collectors.joining("\n"));
+                log.info("Elasticsearch: retrieved {} logs for service '{}'", logs.size(), input.serviceName());
+            }
+        } catch (Exception e) {
+            log.warn("Failed to query Elasticsearch for logs, falling back to static logs simulation: {}", e.getMessage());
+        }
+
+        // 2. Fallback to simulation if no logs found in Elasticsearch
+        if (logsToAnalyze.isEmpty()) {
             logsToAnalyze = simulateLogs(input.serviceName());
         }
 

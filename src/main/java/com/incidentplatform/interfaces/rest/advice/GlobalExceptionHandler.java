@@ -122,6 +122,20 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
+    // ==================== 403 Forbidden ====================
+    @ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
+    public ProblemDetail handleAccessDenied(org.springframework.security.access.AccessDeniedException ex) {
+        log.warn("Access denied: {}", ex.getMessage());
+
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.FORBIDDEN,
+                "Access Denied: You do not have permissions to perform this action."
+        );
+        problem.setTitle("Access Denied");
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
     // ==================== 500 Internal Server Error ====================
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleGenericException(Exception ex) {

@@ -17,6 +17,10 @@ import com.incidentplatform.infrastructure.persistence.repository.AlertRepositor
 import com.incidentplatform.infrastructure.persistence.repository.AuditLogRepository;
 import com.incidentplatform.infrastructure.persistence.repository.IncidentRepository;
 import com.incidentplatform.infrastructure.persistence.repository.InvestigationResultRepository;
+import com.incidentplatform.infrastructure.search.document.IncidentDocument;
+import com.incidentplatform.infrastructure.search.document.LogDocument;
+import com.incidentplatform.infrastructure.search.repository.IncidentElasticsearchRepository;
+import com.incidentplatform.infrastructure.search.repository.LogElasticsearchRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -73,6 +77,8 @@ public class IncidentService {
     private final AlertRepository alertRepository;
     private final AuditLogRepository auditLogRepository;
     private final InvestigationResultRepository investigationResultRepository;
+    private final IncidentElasticsearchRepository incidentElasticsearchRepository;
+    private final LogElasticsearchRepository logElasticsearchRepository;
     private final IncidentMapper incidentMapper;
     private final MeterRegistry meterRegistry;
     private final RedisTemplate<String, Object> redisTemplate;
@@ -100,8 +106,7 @@ public class IncidentService {
         // Step 2: Check deduplication window (10 minutes)
         LocalDateTime deduplicationWindow = LocalDateTime.now().minusMinutes(10);
         boolean isDuplicate = alertRepository
-                .findByFingerprintAndCreatedAtAfter(fingerprint, deduplicationWindow)
-                .isPresent();
+                .existsByFingerprintAndCreatedAtAfter(fingerprint, deduplicationWindow);
 
         if (isDuplicate) {
             log.info("Duplicate alert detected, fingerprint={}. Skipping.", fingerprint);
@@ -139,9 +144,9 @@ public class IncidentService {
                 "severity", request.severity().name(),
                 "source", request.source()
         ).increment();
-        // WHY tags on metrics?
-        // Allows Grafana to filter: "Show me only SEV1 alerts from prometheus"
-        // Without tags: all alerts counted together, useless for debugging.
+
+        // Step 7: Simulate and Index Logs in Elasticsearch
+        simulateAndIndexLogs(request.serviceName(), request.title(), request.severity());
 
         log.info("Alert processed: alertId={}, incidentId={}", savedAlert.getId(), incident.getId());
         return incidentMapper.toAlertResponse(savedAlert);
@@ -174,6 +179,7 @@ public class IncidentService {
                 .build();
 
         IncidentEntity savedIncident = incidentRepository.save(newIncident);
+        indexIncidentInElasticsearch(savedIncident);
 
         recordAuditLog("INCIDENT", savedIncident.getId().toString(),
                 "CREATED", null, "status=OPEN", "SYSTEM");
@@ -212,9 +218,8 @@ public class IncidentService {
         }
 
         IncidentEntity saved = incidentRepository.save(incident);
-
-        // Evict from Redis Cache to maintain consistency
         evictIncidentCache(incidentId);
+        indexIncidentInElasticsearch(saved);
 
         recordAuditLog("INCIDENT", incidentId.toString(),
                 "STATUS_CHANGED", "status=" + oldStatus, "status=" + newStatus, updatedBy);
@@ -328,8 +333,9 @@ public class IncidentService {
         IncidentEntity incident = findIncidentOrThrow(incidentId);
         if (incident.getStatus() == IncidentStatus.OPEN) {
             incident.setStatus(IncidentStatus.INVESTIGATING);
-            incidentRepository.save(incident);
+            IncidentEntity saved = incidentRepository.save(incident);
             evictIncidentCache(incidentId);
+            indexIncidentInElasticsearch(saved);
             recordAuditLog("INCIDENT", incidentId.toString(),
                     "STATUS_CHANGED", "status=OPEN", "status=INVESTIGATING", "AI_ORCHESTRATOR");
             log.info("Incident {} transitioned from OPEN to INVESTIGATING by AI_ORCHESTRATOR", incidentId);
@@ -363,11 +369,69 @@ public class IncidentService {
         incident.setRcaSummary(rcaSummary);
         incident.setResolvedAt(LocalDateTime.now());
         
-        incidentRepository.save(incident);
+        IncidentEntity saved = incidentRepository.save(incident);
         evictIncidentCache(incidentId);
+        indexIncidentInElasticsearch(saved);
         
         recordAuditLog("INCIDENT", incidentId.toString(),
                 "STATUS_CHANGED", "status=" + oldStatus, "status=RESOLVED", "AI_ORCHESTRATOR");
         log.info("Incident {} resolved by AI_ORCHESTRATOR with RCA", incidentId);
+    }
+
+    private void indexIncidentInElasticsearch(IncidentEntity entity) {
+        try {
+            IncidentDocument doc = IncidentDocument.builder()
+                    .id(entity.getId().toString())
+                    .title(entity.getTitle())
+                    .description(entity.getDescription())
+                    .status(entity.getStatus().name())
+                    .severity(entity.getSeverity().name())
+                    .serviceName(entity.getServiceName())
+                    .environment(entity.getEnvironment())
+                    .rcaSummary(entity.getRcaSummary())
+                    .createdAt(entity.getCreatedAt() != null ? entity.getCreatedAt() : LocalDateTime.now())
+                    .build();
+            incidentElasticsearchRepository.save(doc);
+            log.debug("Successfully indexed incident {} in Elasticsearch", entity.getId());
+        } catch (Exception e) {
+            log.error("Failed to index incident {} in Elasticsearch: {}", entity.getId(), e.getMessage());
+        }
+    }
+
+    private void simulateAndIndexLogs(String serviceName, String alertTitle, Severity severity) {
+        try {
+            log.info("Simulating and indexing logs for service '{}' in Elasticsearch", serviceName);
+            LocalDateTime now = LocalDateTime.now();
+            
+            LogDocument log1 = LogDocument.builder()
+                    .id(UUID.randomUUID().toString())
+                    .serviceName(serviceName)
+                    .logLevel("INFO")
+                    .message("Processing incoming HTTP request for endpoint /api/v1/alert-receiver")
+                    .timestamp(now.minusSeconds(15))
+                    .build();
+
+            LogDocument log2 = LogDocument.builder()
+                    .id(UUID.randomUUID().toString())
+                    .serviceName(serviceName)
+                    .logLevel("WARN")
+                    .message("Hikari connection pool usage at 92% for datasource: primary")
+                    .timestamp(now.minusSeconds(10))
+                    .build();
+
+            String level = severity == Severity.SEV1 || severity == Severity.SEV2 ? "ERROR" : "WARN";
+            LogDocument log3 = LogDocument.builder()
+                    .id(UUID.randomUUID().toString())
+                    .serviceName(serviceName)
+                    .logLevel(level)
+                    .message(String.format("%s: Hikari pool-1 connection timeout exception after 30000ms. Failed to obtain DB connection.", alertTitle))
+                    .timestamp(now.minusSeconds(5))
+                    .build();
+
+            logElasticsearchRepository.saveAll(List.of(log1, log2, log3));
+            log.debug("Successfully indexed 3 simulated logs for service {}", serviceName);
+        } catch (Exception e) {
+            log.error("Failed to index simulated logs for service {}: {}", serviceName, e.getMessage());
+        }
     }
 }

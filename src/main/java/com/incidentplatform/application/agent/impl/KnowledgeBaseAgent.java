@@ -5,7 +5,13 @@ import com.incidentplatform.application.agent.model.AgentInput;
 import com.incidentplatform.application.agent.model.AgentResult;
 import com.incidentplatform.infrastructure.persistence.entity.KnowledgeDocumentEntity;
 import com.incidentplatform.infrastructure.persistence.repository.KnowledgeDocumentRepository;
+import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.model.embedding.EmbeddingModel;
+import dev.langchain4j.store.embedding.EmbeddingMatch;
+import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
+import dev.langchain4j.store.embedding.EmbeddingSearchResult;
+import dev.langchain4j.store.embedding.EmbeddingStore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -15,7 +21,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * KnowledgeBaseAgent — Queries PostgreSQL for relevant runbooks and extracts the recovery steps.
+ * KnowledgeBaseAgent — Uses Vector Search (RAG) to locate relevant troubleshooting steps for the incident.
  */
 @Component
 @Slf4j
@@ -24,6 +30,8 @@ public class KnowledgeBaseAgent implements IncidentAgent {
 
     private final ChatLanguageModel chatLanguageModel;
     private final KnowledgeDocumentRepository knowledgeDocumentRepository;
+    private final EmbeddingStore<TextSegment> embeddingStore;
+    private final EmbeddingModel embeddingModel;
 
     @Override
     public String getAgentType() {
@@ -32,17 +40,49 @@ public class KnowledgeBaseAgent implements IncidentAgent {
 
     @Override
     public AgentResult execute(AgentInput input) {
-        log.info("Executing KnowledgeBaseAgent for incident ID: {}", input.incidentId());
+        log.info("Executing KnowledgeBaseAgent (RAG vector search) for incident ID: {}", input.incidentId());
 
-        List<KnowledgeDocumentEntity> docs = knowledgeDocumentRepository.findByServiceName(input.serviceName());
-        
         String context = "";
-        if (docs.isEmpty()) {
-            context = "No specific runbooks found for service " + input.serviceName() + ".";
-        } else {
-            context = docs.stream()
-                .map(d -> "Title: " + d.getTitle() + "\nContent: " + d.getContent())
-                .collect(Collectors.joining("\n---\n"));
+        List<EmbeddingMatch<TextSegment>> matches = List.of();
+
+        try {
+            // 1. Generate query search context
+            String queryText = String.format("Service: %s. Title: %s. Description: %s", 
+                    input.serviceName(), input.title(), input.description());
+
+            // 2. Query pgvector store for semantic matches
+            var queryEmbedding = embeddingModel.embed(queryText).content();
+            EmbeddingSearchRequest searchRequest = EmbeddingSearchRequest.builder()
+                    .queryEmbedding(queryEmbedding)
+                    .maxResults(3)
+                    .minScore(0.3) // Lower threshold to capture partially matching runbooks
+                    .build();
+
+            EmbeddingSearchResult<TextSegment> searchResult = embeddingStore.search(searchRequest);
+            matches = searchResult.matches();
+
+            if (!matches.isEmpty()) {
+                context = matches.stream()
+                        .map(match -> String.format("[Score: %.2f] Runbook context: %s", 
+                                match.score(), match.embedded().text()))
+                        .collect(Collectors.joining("\n---\n"));
+                log.info("RAG: found {} relevant runbook chunks via vector search.", matches.size());
+            }
+        } catch (Exception e) {
+            log.warn("Vector search failed, falling back to direct service name lookup: {}", e.getMessage());
+        }
+
+        // 3. Fallback: query PostgreSQL standard relational tables by service name
+        if (context.isEmpty()) {
+            List<KnowledgeDocumentEntity> docs = knowledgeDocumentRepository.findByServiceName(input.serviceName());
+            if (docs.isEmpty()) {
+                context = "No specific runbooks found for service " + input.serviceName() + ".";
+            } else {
+                context = docs.stream()
+                        .map(d -> "Title: " + d.getTitle() + "\nContent: " + d.getContent())
+                        .collect(Collectors.joining("\n---\n"));
+                log.info("RAG Fallback: retrieved {} matching runbooks by service name.", docs.size());
+            }
         }
 
         String prompt = String.format(
@@ -62,7 +102,8 @@ public class KnowledgeBaseAgent implements IncidentAgent {
             return parseResponse(response);
         } catch (Exception e) {
             log.warn("Ollama LLM call failed in KnowledgeBaseAgent: {}. Using simulated SRE response fallback.", e.getMessage());
-            return getFallbackResult(input, docs);
+            // Map matches back to entities for getFallbackResult signature compatibility
+            return getFallbackResult(input, context);
         }
     }
 
@@ -105,18 +146,16 @@ public class KnowledgeBaseAgent implements IncidentAgent {
         return new AgentResult(findings, reasoning, confidenceScore);
     }
 
-    private AgentResult getFallbackResult(AgentInput input, List<KnowledgeDocumentEntity> docs) {
+    private AgentResult getFallbackResult(AgentInput input, String context) {
         String findings;
         String reasoning;
-        if (docs.isEmpty()) {
+        if (context == null || context.contains("No specific runbooks found")) {
             findings = "1. Scale service capacity or check dependencies.\n" +
                        "2. Restart service instance to release connection leaks.";
             reasoning = "No matching service runbooks found. Recommending generic service recovery steps.";
         } else {
-            findings = docs.stream()
-                .map(d -> "SOP Steps from runbook: " + d.getTitle() + "\n" + d.getContent())
-                .collect(Collectors.joining("\n"));
-            reasoning = "Retrieved matching runbooks from PostgreSQL based on service name: " + input.serviceName();
+            findings = "Extracted steps: " + context;
+            reasoning = "Retrieved matching runbooks via RAG context: " + input.serviceName();
         }
         return new AgentResult(findings, reasoning, new BigDecimal("0.80"));
     }
