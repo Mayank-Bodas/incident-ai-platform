@@ -54,6 +54,11 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 // 1. Public endpoints (auth, health, OpenAPI docs)
                 .requestMatchers(
+                    "/",
+                    "/index.html",
+                    "/css/**",
+                    "/js/**",
+                    "/favicon.ico",
                     "/actuator/health",
                     "/actuator/info",
                     "/actuator/prometheus",

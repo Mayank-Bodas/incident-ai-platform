@@ -54,9 +54,20 @@ public class AgentOrchestrator {
         log.info("Starting AI Agent orchestration pipeline for incident: {}", incidentId);
 
         try {
-            // 1. Fetch current incident info
-            IncidentEntity incident = incidentRepository.findById(incidentId)
-                    .orElseThrow(() -> new IllegalArgumentException("Incident not found for ID: " + incidentId));
+            // 1. Fetch current incident info (with retry for transaction commit lag)
+            IncidentEntity incident = null;
+            for (int i = 0; i < 5; i++) {
+                java.util.Optional<IncidentEntity> opt = incidentRepository.findById(incidentId);
+                if (opt.isPresent()) {
+                    incident = opt.get();
+                    break;
+                }
+                log.info("Incident not found yet (attempt {}/5), waiting for transaction commit...", i + 1);
+                Thread.sleep(200);
+            }
+            if (incident == null) {
+                throw new IllegalArgumentException("Incident not found for ID: " + incidentId);
+            }
 
             // 2. Mark incident as INVESTIGATING
             incidentService.startInvestigation(incidentId);

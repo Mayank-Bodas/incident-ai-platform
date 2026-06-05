@@ -54,4 +54,18 @@ public class IncidentMapper {
                 .createdAt(entity.getCreatedAt())
                 .build();
     }
+
+    public com.incidentplatform.application.dto.response.InvestigationResultResponse toInvestigationResponse(com.incidentplatform.infrastructure.persistence.entity.InvestigationResultEntity entity) {
+        return com.incidentplatform.application.dto.response.InvestigationResultResponse.builder()
+                .id(entity.getId())
+                .agentType(entity.getAgentType())
+                .findings(entity.getFindings())
+                .reasoning(entity.getReasoning())
+                .confidenceScore(entity.getConfidenceScore())
+                .executionTimeMs(entity.getExecutionTimeMs())
+                .modelUsed(entity.getModelUsed())
+                .tokensUsed(entity.getTokensUsed())
+                .createdAt(entity.getCreatedAt())
+                .build();
+    }
 }

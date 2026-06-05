@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🚨 SRE Control Center — AI-Powered Incident Platform</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;600;700;900&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="cyber-theme">
+
+    <!-- LOGIN GATE OVERLAY -->
+    <div id="login-overlay" class="auth-overlay">
+        <div class="auth-card glassmorphism">
+            <div class="auth-header">
+                <span class="auth-icon">🚨</span>
+                <h1 class="auth-title">SRE CONTROL CENTER</h1>
+                <p class="auth-subtitle">AI-Powered Incident Management Platform</p>
+            </div>
+            
+            <form id="login-form" class="auth-form">
+                <div class="form-group">
+                    <label for="login-email">OPERATOR EMAIL</label>
+                    <input type="email" id="login-email" required placeholder="name@test.com">
+                </div>
+                <div class="form-group">
+                    <label for="login-password">SECURE KEY / PASSWORD</label>
+                    <input type="password" id="login-password" required placeholder="••••••••">
+                </div>
+                
+                <div id="login-error-msg" class="auth-error hidden"></div>
+                
+                <button type="submit" id="btn-submit-login" class="btn btn-primary btn-block">AUTHENTICATE OPERATOR</button>
+            </form>
+
+            <div class="quick-credentials">
+                <p class="quick-title">QUICK ACCESS BADGES</p>
+                <div class="badge-row">
+                    <button class="credential-badge" data-email="admin@test.com" data-password="password">
+                        <span class="badge-role">ADMIN</span>
+                        <span class="badge-email">admin@test.com</span>
+                    </button>
+                    <button class="credential-badge" data-email="engineer@test.com" data-password="password">
+                        <span class="badge-role engineer">ENGINEER</span>
+                        <span class="badge-email">engineer@test.com</span>
+                    </button>
+                    <button class="credential-badge" data-email="viewer@test.com" data-password="password">
+                        <span class="badge-role viewer">VIEWER</span>
+                        <span class="badge-email">viewer@test.com</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN DASHBOARD APP CONTAINER -->
+    <div id="dashboard-app" class="app-layout hidden">
+        
+        <!-- SIDEBAR NAVIGATION -->
+        <aside class="sidebar glassmorphism">
+            <div class="sidebar-brand">
+                <span class="brand-pulse"></span>
+                <span class="brand-text">SRE CORE</span>
+            </div>
+
+            <!-- Profile Info -->
+            <div class="user-profile">
+                <div class="profile-avatar">SRE</div>
+                <div class="profile-info">
+                    <div id="user-email-display" class="profile-name">operator@test.com</div>
+                    <div id="user-role-display" class="profile-role">ROLE_ENGINEER</div>
+                </div>
+            </div>
+
+            <!-- Action CTAs -->
+            <div class="action-section">
+                <button id="btn-simulate-alert" class="btn btn-simulate btn-block">
+                    <span class="icon">⚡</span> SIMULATE INCIDENT
+                </button>
+                <button id="btn-open-ingest" class="btn btn-outline btn-block">
+                    <span class="icon">📥</span> INGEST RUNBOOK
+                </button>
+                <button id="btn-open-search" class="btn btn-outline btn-block">
+                    <span class="icon">🔍</span> SEARCH CENTER
+                </button>
+            </div>
+
+            <!-- Filters -->
+            <div class="sidebar-filters">
+                <h3 class="filter-heading">ACTIVE INCIDENTS FILTER</h3>
+                <div class="form-group">
+                    <input type="text" id="filter-search" placeholder="Filter by service/title...">
+                </div>
+                <div class="form-group">
+                    <label>STATUS</label>
+                    <div class="checkbox-group">
+                        <label class="custom-checkbox">
+                            <input type="checkbox" id="filter-status-open" checked>
+                            <span class="checkbox-box"></span> OPEN
+                        </label>
+                        <label class="custom-checkbox">
+                            <input type="checkbox" id="filter-status-investigating" checked>
+                            <span class="checkbox-box"></span> INVESTIGATING
+                        </label>
+                        <label class="custom-checkbox">
+                            <input type="checkbox" id="filter-status-resolved" checked>
+                            <span class="checkbox-box"></span> RESOLVED
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-footer">
+                <button id="btn-logout" class="btn btn-logout btn-block">DE-AUTHENTICATE</button>
+            </div>
+        </aside>
+
+        <!-- MAIN CONTENT CONTAINER -->
+        <main class="main-content">
+            
+            <!-- Left Incident List -->
+            <section class="incident-list-panel glassmorphism">
+                <div class="panel-header">
+                    <h2>INCIDENT CONTROL GRID</h2>
+                    <span id="incident-count" class="panel-badge">0 Active</span>
+                </div>
+                <div id="incident-list-container" class="incident-scroll-list">
+                    <!-- Dynamic Incidents Rendered Here -->
+                    <div class="empty-state">
+                        <p>Scanning incident buffer...</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Right Detail Context Panel -->
+            <section class="incident-detail-panel glassmorphism">
+                <div id="detail-empty-state" class="detail-empty">
+                    <div class="empty-animation">📡</div>
+                    <h3>No Incident Selected</h3>
+                    <p>Select an incident from the control grid to inspect its metadata and trace the AI Orchestration execution.</p>
+                </div>
+
+                <div id="detail-content" class="detail-wrapper hidden">
+                    <div class="detail-header-block">
+                        <div class="title-row">
+                            <h2 id="detail-title">Incident Title</h2>
+                            <span id="detail-severity" class="severity-badge sev1">SEV1</span>
+                        </div>
+                        <div class="meta-row">
+                            <div class="meta-item">STATUS: <span id="detail-status" class="status-indicator status-open">OPEN</span></div>
+                            <div class="meta-item">SERVICE: <span id="detail-service">payment-service</span></div>
+                            <div class="meta-item">ENV: <span id="detail-env">production</span></div>
+                            <div class="meta-item">ID: <span id="detail-id" class="mono">uuid-code</span></div>
+                        </div>
+                    </div>
+
+                    <div class="detail-body-section">
+                        <div class="description-card">
+                            <h4>ALERT DESCRIPTION</h4>
+                            <p id="detail-desc">No description provided.</p>
+                        </div>
+
+                        <!-- AI Agent Pipeline Tracker -->
+                        <div class="ai-pipeline-section">
+                            <h3>🤖 AI AGENT COLLABORATIVE TIMELINE</h3>
+                            
+                            <div class="pipeline-flow">
+                                <!-- Planner Agent Step -->
+                                <div class="pipeline-step" id="step-planner">
+                                    <div class="step-header">
+                                        <span class="step-num">1</span>
+                                        <span class="step-title">PLANNER AGENT</span>
+                                        <span class="step-status">PENDING</span>
+                                    </div>
+                                    <div class="step-content">
+                                        <div class="checklist-container">
+                                            <h5>INVESTIGATION CHECKLIST</h5>
+                                            <ul id="step-planner-list">
+                                                <!-- Checklist items -->
+                                            </ul>
+                                        </div>
+                                        <div class="collapsible-reasoning">
+                                            <summary>View Reasoning</summary>
+                                            <pre id="step-planner-reasoning" class="code-box"></pre>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Log Metrics Agent Step -->
+                                <div class="pipeline-step" id="step-log-metrics">
+                                    <div class="step-header">
+                                        <span class="step-num">2</span>
+                                        <span class="step-title">LOG & METRICS ANALYSIS AGENT</span>
+                                        <span class="step-status">PENDING</span>
+                                    </div>
+                                    <div class="step-content">
+                                        <div class="terminal-box">
+                                            <div class="terminal-header">
+                                                <span class="dot red"></span>
+                                                <span class="dot yellow"></span>
+                                                <span class="dot green"></span>
+                                                <span class="title">service-anomaly-log</span>
+                                            </div>
+                                            <pre id="step-log-output" class="terminal-body"></pre>
+                                        </div>
+                                        <div class="collapsible-reasoning">
+                                            <summary>View Reasoning</summary>
+                                            <pre id="step-log-reasoning" class="code-box"></pre>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Knowledge Agent Step -->
+                                <div class="pipeline-step" id="step-knowledge">
+                                    <div class="step-header">
+                                        <span class="step-num">3</span>
+                                        <span class="step-title">KNOWLEDGE BASE RAG AGENT</span>
+                                        <span class="step-status">PENDING</span>
+                                    </div>
+                                    <div class="step-content">
+                                        <div class="runbook-pvc-card">
+                                            <h5>RETRIEVED SOP RUNBOOKS (pgvector similarity cosine distance)</h5>
+                                            <div id="step-knowledge-document" class="document-box">
+                                                <!-- Retrieved runbooks -->
+                                            </div>
+                                        </div>
+                                        <div class="collapsible-reasoning">
+                                            <summary>View Reasoning</summary>
+                                            <pre id="step-knowledge-reasoning" class="code-box"></pre>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- RCA Agent Step -->
+                                <div class="pipeline-step" id="step-rca">
+                                    <div class="step-header">
+                                        <span class="step-num">4</span>
+                                        <span class="step-title">RCA & RECOMMENDATION AGENT</span>
+                                        <span class="step-status">PENDING</span>
+                                    </div>
+                                    <div class="step-content">
+                                        <div class="rca-card">
+                                            <div class="rca-score-row">
+                                                <h5>SYNTHESIZED ROOT CAUSE ANALYSIS</h5>
+                                                <div class="confidence-badge">CONFIDENCE: <span id="detail-rca-score">90%</span></div>
+                                            </div>
+                                            <div id="detail-rca-summary" class="rca-summary-box">
+                                                <!-- RCA Summary -->
+                                            </div>
+                                            <h5 style="margin-top: 15px;">RECOMMENDED REMEDIATION</h5>
+                                            <div id="detail-rca-recommendations" class="remediation-box">
+                                                <!-- Recommendations -->
+                                            </div>
+                                        </div>
+                                        <div class="collapsible-reasoning">
+                                            <summary>View Reasoning</summary>
+                                            <pre id="step-rca-reasoning" class="code-box"></pre>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- INGEST RUNBOOK MODAL -->
+    <div id="modal-ingest" class="modal-overlay hidden">
+        <div class="modal-card glassmorphism">
+            <div class="modal-header">
+                <h3>📥 INGEST RUNBOOK SOP</h3>
+                <button id="btn-close-ingest" class="modal-close">&times;</button>
+            </div>
+            <form id="ingest-form">
+                <div class="form-group">
+                    <label for="ingest-title">RUNBOOK TITLE</label>
+                    <input type="text" id="ingest-title" required placeholder="Database Outage Troubleshooting Guide">
+                </div>
+                <div class="form-row">
+                    <div class="form-group col">
+                        <label for="ingest-service">SERVICE NAME</label>
+                        <input type="text" id="ingest-service" required placeholder="payment-service">
+                    </div>
+                    <div class="form-group col">
+                        <label for="ingest-tags">TAGS (COMMA SEPARATED)</label>
+                        <input type="text" id="ingest-tags" placeholder="postgres, hikari, db">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="ingest-content">RUNBOOK CONTENT / PROCEDURAL STEPS</label>
+                    <textarea id="ingest-content" rows="6" required placeholder="SOP: Step 1. Verify pool metrics. Step 2. Flush connections..."></textarea>
+                </div>
+                
+                <div id="ingest-msg" class="modal-msg hidden"></div>
+                
+                <div class="modal-footer">
+                    <button type="button" id="btn-cancel-ingest" class="btn btn-outline">CANCEL</button>
+                    <button type="submit" class="btn btn-primary">VECTOR INDEX RUNBOOK</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ELASTICSEARCH SEARCH MODAL -->
+    <div id="modal-search" class="modal-overlay hidden">
+        <div class="modal-card glassmorphism search-modal-card">
+            <div class="modal-header">
+                <h3>🔍 SEARCH CENTER (Elasticsearch)</h3>
+                <button id="btn-close-search" class="modal-close">&times;</button>
+            </div>
+            
+            <div class="search-tabs">
+                <button id="tab-search-incidents" class="search-tab active">INCIDENTS INDEX</button>
+                <button id="tab-search-logs" class="search-tab">LOGS INDEX</button>
+            </div>
+
+            <!-- Incidents Search Pane -->
+            <div id="pane-search-incidents" class="search-pane">
+                <div class="search-bar-row">
+                    <input type="text" id="search-incidents-input" placeholder="Search title, description, or RCA summaries...">
+                    <button id="btn-run-search-incidents" class="btn btn-primary">SEARCH</button>
+                </div>
+                <div id="search-incidents-results" class="search-results-list">
+                    <div class="empty-results">Enter query terms to search incidents index...</div>
+                </div>
+            </div>
+
+            <!-- Logs Search Pane -->
+            <div id="pane-search-logs" class="search-pane hidden">
+                <div class="search-bar-row">
+                    <input type="text" id="search-logs-service" placeholder="Service Name (e.g. payment-service)" style="flex: 1;">
+                    <input type="text" id="search-logs-query" placeholder="Query term (e.g. ConnectionTimeoutException)" style="flex: 2;">
+                    <button id="btn-run-search-logs" class="btn btn-primary">SEARCH LOGS</button>
+                </div>
+                <div id="search-logs-results" class="search-results-list">
+                    <div class="empty-results">Search logs index by microservice name...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>

@@ -3,6 +3,7 @@ package com.incidentplatform.application.service;
 import com.incidentplatform.application.dto.request.CreateAlertRequest;
 import com.incidentplatform.application.dto.response.AlertResponse;
 import com.incidentplatform.application.dto.response.IncidentResponse;
+import com.incidentplatform.application.dto.response.InvestigationResultResponse;
 import com.incidentplatform.domain.enums.IncidentStatus;
 import com.incidentplatform.domain.enums.Severity;
 import com.incidentplatform.domain.exception.DuplicateAlertException;
@@ -359,6 +360,15 @@ public class IncidentService {
         recordAuditLog("INVESTIGATION", incidentId.toString(),
                 "AGENT_COMPLETED", null, "agent=" + agentType, "AI_ORCHESTRATOR");
         log.info("Saved agent {} result for incident {}", agentType, incidentId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<InvestigationResultResponse> getInvestigationResults(UUID incidentId) {
+        log.info("Fetching investigation results for incident: {}", incidentId);
+        List<InvestigationResultEntity> entities = investigationResultRepository.findByIncidentId(incidentId);
+        return entities.stream()
+                .map(incidentMapper::toInvestigationResponse)
+                .toList();
     }
 
     public void resolveIncident(UUID incidentId, String rcaSummary) {

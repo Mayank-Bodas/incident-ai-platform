@@ -2,6 +2,7 @@ package com.incidentplatform.interfaces.rest.controller;
 
 import com.incidentplatform.application.dto.request.CreateAlertRequest;
 import com.incidentplatform.application.dto.response.IncidentResponse;
+import com.incidentplatform.application.dto.response.InvestigationResultResponse;
 import com.incidentplatform.application.service.IncidentService;
 import com.incidentplatform.domain.enums.IncidentStatus;
 import com.incidentplatform.infrastructure.messaging.kafka.producer.AlertEventProducer;
@@ -16,6 +17,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -127,5 +129,14 @@ public class AlertController {
 
         // In Day 4: replace "SYSTEM" with the authenticated user from JWT
         return ResponseEntity.ok(incidentService.updateIncidentStatus(id, status, "SYSTEM"));
+    }
+
+    /**
+     * GET /api/v1/incidents/{id}/investigations — Get agent investigation results for a specific incident.
+     */
+    @GetMapping("/incidents/{id}/investigations")
+    @Operation(summary = "Get agent investigation results for an incident")
+    public ResponseEntity<List<InvestigationResultResponse>> getInvestigationResults(@PathVariable UUID id) {
+        return ResponseEntity.ok(incidentService.getInvestigationResults(id));
     }
 }
