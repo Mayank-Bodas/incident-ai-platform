@@ -10,10 +10,14 @@ import com.incidentplatform.infrastructure.persistence.entity.AlertEntity;
 import com.incidentplatform.infrastructure.persistence.entity.AuditLogEntity;
 import com.incidentplatform.infrastructure.persistence.entity.IncidentEntity;
 import com.incidentplatform.infrastructure.persistence.entity.UserEntity;
+import com.incidentplatform.infrastructure.persistence.entity.KnowledgeDocumentEntity;
+import com.incidentplatform.infrastructure.persistence.entity.InvestigationResultEntity;
 import com.incidentplatform.infrastructure.persistence.repository.AlertRepository;
 import com.incidentplatform.infrastructure.persistence.repository.AuditLogRepository;
 import com.incidentplatform.infrastructure.persistence.repository.IncidentRepository;
 import com.incidentplatform.infrastructure.persistence.repository.UserRepository;
+import com.incidentplatform.infrastructure.persistence.repository.KnowledgeDocumentRepository;
+import com.incidentplatform.infrastructure.persistence.repository.InvestigationResultRepository;
 import com.incidentplatform.infrastructure.security.JwtService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -63,6 +67,12 @@ public class IncidentIntegrationTest {
     private UserRepository userRepository;
 
     @Autowired
+    private KnowledgeDocumentRepository knowledgeDocumentRepository;
+
+    @Autowired
+    private InvestigationResultRepository investigationResultRepository;
+
+    @Autowired
     private JwtService jwtService;
 
     @Autowired
@@ -76,9 +86,11 @@ public class IncidentIntegrationTest {
     public void setup() {
         // Clear db tables (delete child entities first due to foreign keys)
         alertRepository.deleteAll();
+        investigationResultRepository.deleteAll();
         incidentRepository.deleteAll();
         auditLogRepository.deleteAll();
         userRepository.deleteAll();
+        knowledgeDocumentRepository.deleteAll();
 
         // Seed test users for Role-Based Access Control
         UserEntity admin = userRepository.save(UserEntity.builder()
@@ -117,9 +129,11 @@ public class IncidentIntegrationTest {
     @AfterEach
     public void cleanup() {
         alertRepository.deleteAll();
+        investigationResultRepository.deleteAll();
         incidentRepository.deleteAll();
         auditLogRepository.deleteAll();
         userRepository.deleteAll();
+        knowledgeDocumentRepository.deleteAll();
 
         // Clear redis keys generated during tests
         redisTemplate.delete(redisTemplate.keys("incident:*"));
@@ -191,13 +205,72 @@ public class IncidentIntegrationTest {
             
             IncidentEntity incident = incidents.get(0);
             assertThat(incident.getTitle()).contains("Payment service latency high");
-            assertThat(incident.getStatus()).isEqualTo(IncidentStatus.OPEN);
+            assertThat(incident.getStatus()).isIn(IncidentStatus.OPEN, IncidentStatus.INVESTIGATING, IncidentStatus.RESOLVED);
 
             List<AlertEntity> alerts = alertRepository.findAll();
             List<AlertEntity> incidentAlerts = alerts.stream()
                     .filter(a -> a.getIncident().getId().equals(incident.getId()))
                     .toList();
             assertThat(incidentAlerts).hasSize(1);
+        });
+    }
+
+    @Test
+    public void testAiAgentOrchestrationPipelineE2E() throws Exception {
+        String serviceName = "billing-service-" + UUID.randomUUID().toString().substring(0, 8);
+        
+        // Seed a knowledge document for the service
+        knowledgeDocumentRepository.save(KnowledgeDocumentEntity.builder()
+                .title("Billing Database Connection Outage Runbook")
+                .content("SOP: When billing DB experiences connection timeouts, verify the pool size, clear leaked connections, and restart.")
+                .documentType("RUNBOOK")
+                .serviceName(serviceName)
+                .tags(List.of("postgres", "database"))
+                .createdBy("ADMIN")
+                .build());
+
+        CreateAlertRequest request = CreateAlertRequest.builder()
+                .title("Billing database connection failure")
+                .description("Hikari pool-1 connection timeout exception")
+                .severity(Severity.SEV1)
+                .source("prometheus")
+                .serviceName(serviceName)
+                .environment("production")
+                .rawPayload("{\"error\":\"ConnectionTimeoutException\"}")
+                .build();
+
+        // Ingest the alert
+        mockMvc.perform(post("/api/v1/alerts")
+                        .header("Authorization", "Bearer " + engineerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isAccepted());
+
+        // Wait for the AI Pipeline to finish executing all 4 agents and resolve the incident
+        await().atMost(20, TimeUnit.SECONDS).untilAsserted(() -> {
+            List<IncidentEntity> incidents = incidentRepository.findByServiceName(serviceName, 
+                    org.springframework.data.domain.Pageable.ofSize(10)).getContent();
+            assertThat(incidents).hasSize(1);
+            
+            IncidentEntity incident = incidents.get(0);
+            assertThat(incident.getStatus()).isEqualTo(IncidentStatus.RESOLVED);
+            assertThat(incident.getRcaSummary()).isNotEmpty();
+            assertThat(incident.getResolvedAt()).isNotNull();
+
+            // Verify that all 4 agents wrote their results to DB
+            List<InvestigationResultEntity> results = 
+                    investigationResultRepository.findByIncidentId(incident.getId());
+            assertThat(results).hasSize(4);
+            
+            // Check that we have one result for each agent type
+            List<String> agentTypes = results.stream().map(r -> r.getAgentType()).toList();
+            assertThat(agentTypes).containsExactlyInAnyOrder("PLANNER", "LOG_METRICS", "KNOWLEDGE", "RCA_RECOMMENDATION");
+            
+            for (InvestigationResultEntity res : results) {
+                assertThat(res.getFindings()).isNotEmpty();
+                assertThat(res.getReasoning()).isNotEmpty();
+                assertThat(res.getConfidenceScore()).isNotNull();
+            }
         });
     }
 

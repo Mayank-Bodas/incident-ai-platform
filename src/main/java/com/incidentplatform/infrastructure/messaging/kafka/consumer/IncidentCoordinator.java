@@ -104,7 +104,7 @@ public class IncidentCoordinator {
     )
     @KafkaListener(
             topics = KafkaConfig.ALERT_EVENTS_TOPIC,
-            groupId = "incident-coordinator-group",
+            groupId = "incident-coordinator-group-${random.uuid}",
             containerFactory = "kafkaListenerContainerFactory"
     )
     @Transactional

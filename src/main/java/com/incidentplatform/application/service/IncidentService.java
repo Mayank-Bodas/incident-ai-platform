@@ -11,10 +11,12 @@ import com.incidentplatform.domain.exception.InvalidStateTransitionException;
 import com.incidentplatform.infrastructure.persistence.entity.AlertEntity;
 import com.incidentplatform.infrastructure.persistence.entity.AuditLogEntity;
 import com.incidentplatform.infrastructure.persistence.entity.IncidentEntity;
+import com.incidentplatform.infrastructure.persistence.entity.InvestigationResultEntity;
 import com.incidentplatform.infrastructure.persistence.mapper.IncidentMapper;
 import com.incidentplatform.infrastructure.persistence.repository.AlertRepository;
 import com.incidentplatform.infrastructure.persistence.repository.AuditLogRepository;
 import com.incidentplatform.infrastructure.persistence.repository.IncidentRepository;
+import com.incidentplatform.infrastructure.persistence.repository.InvestigationResultRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +26,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import org.springframework.data.redis.core.RedisTemplate;
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -69,6 +72,7 @@ public class IncidentService {
     private final IncidentRepository incidentRepository;
     private final AlertRepository alertRepository;
     private final AuditLogRepository auditLogRepository;
+    private final InvestigationResultRepository investigationResultRepository;
     private final IncidentMapper incidentMapper;
     private final MeterRegistry meterRegistry;
     private final RedisTemplate<String, Object> redisTemplate;
@@ -318,5 +322,52 @@ public class IncidentService {
             // SHA-256 is guaranteed to exist in every JVM. This exception is theoretical.
             throw new RuntimeException("SHA-256 algorithm not available", e);
         }
+    }
+
+    public void startInvestigation(UUID incidentId) {
+        IncidentEntity incident = findIncidentOrThrow(incidentId);
+        if (incident.getStatus() == IncidentStatus.OPEN) {
+            incident.setStatus(IncidentStatus.INVESTIGATING);
+            incidentRepository.save(incident);
+            evictIncidentCache(incidentId);
+            recordAuditLog("INCIDENT", incidentId.toString(),
+                    "STATUS_CHANGED", "status=OPEN", "status=INVESTIGATING", "AI_ORCHESTRATOR");
+            log.info("Incident {} transitioned from OPEN to INVESTIGATING by AI_ORCHESTRATOR", incidentId);
+        }
+    }
+
+    public void saveInvestigationResult(UUID incidentId, String agentType, String findings, String reasoning, BigDecimal confidence, long executionTimeMs, String modelUsed, int tokensUsed) {
+        IncidentEntity incident = findIncidentOrThrow(incidentId);
+        InvestigationResultEntity result = InvestigationResultEntity.builder()
+                .incident(incident)
+                .agentType(agentType)
+                .findings(findings)
+                .reasoning(reasoning)
+                .confidenceScore(confidence)
+                .executionTimeMs(executionTimeMs)
+                .modelUsed(modelUsed)
+                .tokensUsed(tokensUsed)
+                .build();
+        investigationResultRepository.save(result);
+        
+        recordAuditLog("INVESTIGATION", incidentId.toString(),
+                "AGENT_COMPLETED", null, "agent=" + agentType, "AI_ORCHESTRATOR");
+        log.info("Saved agent {} result for incident {}", agentType, incidentId);
+    }
+
+    public void resolveIncident(UUID incidentId, String rcaSummary) {
+        IncidentEntity incident = findIncidentOrThrow(incidentId);
+        String oldStatus = incident.getStatus().name();
+        
+        incident.setStatus(IncidentStatus.RESOLVED);
+        incident.setRcaSummary(rcaSummary);
+        incident.setResolvedAt(LocalDateTime.now());
+        
+        incidentRepository.save(incident);
+        evictIncidentCache(incidentId);
+        
+        recordAuditLog("INCIDENT", incidentId.toString(),
+                "STATUS_CHANGED", "status=" + oldStatus, "status=RESOLVED", "AI_ORCHESTRATOR");
+        log.info("Incident {} resolved by AI_ORCHESTRATOR with RCA", incidentId);
     }
 }
