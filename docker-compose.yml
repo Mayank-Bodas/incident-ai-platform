@@ -96,36 +96,16 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command: |
-      "
-      # WHY these specific partition counts?
-      # alert-events: 6 partitions = 6 consumers can read in parallel (scalability)
-      # incident-events: 3 partitions = ordered per incident (partition by incidentId)
-      # investigation-events: 3 partitions = one consumer per agent type
-      # recommendation-events: 1 partition = single ordered stream (simplicity)
-      
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists \
-        --topic alert-events --partitions 6 --replication-factor 1
-      
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists \
-        --topic incident-events --partitions 3 --replication-factor 1
-      
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists \
-        --topic investigation-events --partitions 3 --replication-factor 1
-      
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists \
-        --topic recommendation-events --partitions 1 --replication-factor 1
-      
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists \
-        --topic alert-events-dlq --partitions 1 --replication-factor 1
-      
-      echo 'Topics created successfully'
-      "
-    # WHY DLQ (Dead Letter Queue)?
-    # When a consumer fails to process a message after N retries, it goes to DLQ.
-    # Ops team can inspect failed messages and reprocess them. Without DLQ, failed
-    # messages block the entire partition. Interview: "How do you handle poison pill messages?"
+    command:
+      - /bin/sh
+      - -c
+      - |
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic alert-events --partitions 6 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic incident-events --partitions 3 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic investigation-events --partitions 3 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic recommendation-events --partitions 1 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic alert-events-dlq --partitions 1 --replication-factor 1
+        echo ">>> All Kafka topics created successfully <<<"
 
   # ==================== Redis ====================
   # WHY Redis?

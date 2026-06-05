@@ -100,7 +100,7 @@ public class IncidentCoordinator {
             backoff = @Backoff(delay = 1000, multiplier = 3, maxDelay = 10000),
             dltTopicSuffix = "-dlq",
             topicSuffixingStrategy = TopicSuffixingStrategy.SUFFIX_WITH_INDEX_VALUE,
-            autoCreateTopics = "false"
+            autoCreateTopics = "true"
     )
     @KafkaListener(
             topics = KafkaConfig.ALERT_EVENTS_TOPIC,
