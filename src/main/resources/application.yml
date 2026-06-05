@@ -165,6 +165,8 @@ management:
   endpoint:
     health:
       show-details: always
+      probes:
+        enabled: true
       # WHY show-details always in dev?
       # Shows DB connection status, disk space, Redis ping etc.
       # In production: show-details: when_authorized

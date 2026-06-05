@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: incident-configmap
+  namespace: incident-management
+data:
+  # Relational Database Coordinates
+  POSTGRES_URL: "jdbc:postgresql://incident-postgres:5432/incident_db"
+  POSTGRES_USER: "incident_user"
+  
+  # Cache Coordinates
+  REDIS_HOST: "incident-redis"
+  REDIS_PORT: "6379"
+  
+  # Messaging Coordinates
+  KAFKA_BOOTSTRAP_SERVERS: "incident-kafka:9092"
+  
+  # Full-Text Search Coordinates
+  ELASTICSEARCH_URIS: "http://incident-elasticsearch:9200"
+  
+  # Local AI Model Gateway URL (assumes host gateway or internal cluster service)
+  LANGCHAIN4J_OLLAMA_CHAT_MODEL_BASE_URL: "http://host.docker.internal:11434"

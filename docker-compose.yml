@@ -175,24 +175,42 @@ services:
       ELASTICSEARCH_HOSTS: http://elasticsearch:9200
 
   # ==================== The Spring Boot App (Day 7 addition) ====================
-  # COMMENTED OUT: We'll run the app locally during development (faster iteration).
-  # On Day 7, we'll uncomment this for full docker-compose deployment.
-  # app:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile
-  #   container_name: incident-app
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #     kafka:
-  #       condition: service_healthy
-  #     redis:
-  #       condition: service_healthy
-  #   ports:
-  #     - "8080:8080"
-  #   environment:
-  #     SPRING_PROFILES_ACTIVE: docker
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: incident-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/incident_db
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_ELASTICSEARCH_URIS: http://elasticsearch:9200
+      LANGCHAIN4J_OLLAMA_CHAT_MODEL_BASE_URL: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ==================== Prometheus (Day 7 addition) ====================
+  prometheus:
+    image: prom/prometheus:v2.54.0
+    container_name: incident-prometheus
+    depends_on:
+      - app
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./scripts/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+
 
 # ==================== Volumes ====================
 # WHY named volumes?

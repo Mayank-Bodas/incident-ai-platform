@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: incident-app
+  namespace: incident-management
+  labels:
+    app: incident-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: incident-app
+  template:
+    metadata:
+      labels:
+        app: incident-app
+    spec:
+      containers:
+        - name: app
+          image: incident-platform:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: SPRING_DATASOURCE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: incident-configmap
+                  key: POSTGRES_URL
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: incident-configmap
+                  key: POSTGRES_USER
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: incident-secrets
+                  key: postgres-password
+            - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: incident-configmap
+                  key: KAFKA_BOOTSTRAP_SERVERS
+            - name: SPRING_DATA_REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: incident-configmap
+                  key: REDIS_HOST
+            - name: SPRING_DATA_REDIS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: incident-configmap
+                  key: REDIS_PORT
+            - name: SPRING_DATA_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: incident-secrets
+                  key: redis-password
+            - name: SPRING_ELASTICSEARCH_URIS
+              valueFrom:
+                configMapKeyRef:
+                  name: incident-configmap
+                  key: ELASTICSEARCH_URIS
+            - name: LANGCHAIN4J_OLLAMA_CHAT_MODEL_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: incident-configmap
+                  key: LANGCHAIN4J_OLLAMA_CHAT_MODEL_BASE_URL
+            - name: APP_SECURITY_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: incident-secrets
+                  key: jwt-secret
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: incident-app
+  namespace: incident-management
+spec:
+  ports:
+    - port: 80
+      targetPort: 8080
+      nodePort: 30080
+      name: http
+  selector:
+    app: incident-app
+  type: NodePort
