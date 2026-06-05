@@ -23,6 +23,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import org.springframework.data.redis.core.RedisTemplate;
+import java.time.Duration;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -69,6 +71,8 @@ public class IncidentService {
     private final AuditLogRepository auditLogRepository;
     private final IncidentMapper incidentMapper;
     private final MeterRegistry meterRegistry;
+    private final RedisTemplate<String, Object> redisTemplate;
+
     // WHY inject MeterRegistry?
     // Micrometer metrics: count alerts received, track incident creation rate.
     // These metrics appear in /actuator/prometheus → Grafana dashboard.
@@ -205,6 +209,9 @@ public class IncidentService {
 
         IncidentEntity saved = incidentRepository.save(incident);
 
+        // Evict from Redis Cache to maintain consistency
+        evictIncidentCache(incidentId);
+
         recordAuditLog("INCIDENT", incidentId.toString(),
                 "STATUS_CHANGED", "status=" + oldStatus, "status=" + newStatus, updatedBy);
 
@@ -214,8 +221,46 @@ public class IncidentService {
 
     @Transactional(readOnly = true)
     public IncidentResponse getIncident(UUID incidentId) {
-        return incidentMapper.toResponse(findIncidentOrThrow(incidentId));
+        String cacheKey = getIncidentCacheKey(incidentId);
+        try {
+            IncidentResponse cached = (IncidentResponse) redisTemplate.opsForValue().get(cacheKey);
+            if (cached != null) {
+                log.info("Redis Cache HIT for incident: {}", incidentId);
+                return cached;
+            }
+        } catch (Exception e) {
+            log.warn("Failed to retrieve incident from Redis cache: {}", e.getMessage());
+        }
+
+        log.info("Redis Cache MISS for incident: {}", incidentId);
+        IncidentResponse response = incidentMapper.toResponse(findIncidentOrThrow(incidentId));
+
+        try {
+            // Cache-Aside: write back to cache. Dynamic TTL: 24hr for resolved/closed, 1hr for active.
+            long ttlHours = (response.status() == IncidentStatus.RESOLVED || response.status() == IncidentStatus.CLOSED) ? 24 : 1;
+            redisTemplate.opsForValue().set(cacheKey, response, Duration.ofHours(ttlHours));
+            log.info("Saved incident: {} to Redis cache with TTL {} hours", incidentId, ttlHours);
+        } catch (Exception e) {
+            log.warn("Failed to save incident to Redis cache: {}", e.getMessage());
+        }
+
+        return response;
     }
+
+    private String getIncidentCacheKey(UUID incidentId) {
+        return "incident:" + incidentId.toString();
+    }
+
+    private void evictIncidentCache(UUID incidentId) {
+        try {
+            String key = getIncidentCacheKey(incidentId);
+            redisTemplate.delete(key);
+            log.info("Evicted incident from cache: {}", incidentId);
+        } catch (Exception e) {
+            log.warn("Failed to evict incident from Redis cache: {}", e.getMessage());
+        }
+    }
+
 
     @Transactional(readOnly = true)
     public Page<IncidentResponse> listIncidents(IncidentStatus status, Pageable pageable) {

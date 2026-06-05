@@ -220,3 +220,15 @@ logging:
     # WHY structured log pattern?
     # Timestamp + thread + level + logger = correlation in distributed logs.
     # In production: use JSON logging (logstash-logback-encoder) for Elasticsearch ingestion.
+
+# ==================== CUSTOM APP PROPERTIES ====================
+app:
+  security:
+    jwt:
+      # Base64 encoded 256-bit secret key (HMAC-SHA256)
+      secret: OWF0ZmFzZGY5YTRmMmM4ZDNiN2ExZTVmOGcwaDJpNGo2azhsMG0ybjRvNnA4cTByMnM0dDZ1OHYwdzJ4NHk2ejhBMDBCMkM0RA==
+      expiration: 86400000 # 24 hours in milliseconds
+  rate-limit:
+    capacity: 10
+    refill-rate: 1.0 # 1 token per second (1.0)
+

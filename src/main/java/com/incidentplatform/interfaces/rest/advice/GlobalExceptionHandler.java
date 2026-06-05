@@ -107,6 +107,21 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
+    // ==================== 405 Method Not Allowed ====================
+    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
+    public ProblemDetail handleMethodNotSupported(org.springframework.web.HttpRequestMethodNotSupportedException ex) {
+        log.warn("HTTP method not supported: {}", ex.getMessage());
+
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.METHOD_NOT_ALLOWED,
+                ex.getMessage()
+        );
+        problem.setTitle("Method Not Allowed");
+        problem.setType(URI.create("https://incidentplatform.com/errors/method-not-allowed"));
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
     // ==================== 500 Internal Server Error ====================
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleGenericException(Exception ex) {
@@ -127,3 +142,4 @@ public class GlobalExceptionHandler {
         return problem;
     }
 }
+
