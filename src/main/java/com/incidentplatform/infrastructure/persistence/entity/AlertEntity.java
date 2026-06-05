@@ -3,6 +3,8 @@ package com.incidentplatform.infrastructure.persistence.entity;
 import com.incidentplatform.domain.enums.Severity;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
@@ -80,12 +82,17 @@ public class AlertEntity {
     // If same alert fires 100 times in 5 minutes, we only create ONE incident.
     // This is how PagerDuty's "alert grouping" works under the hood.
 
-    @Column(name = "raw_payload", columnDefinition = "JSONB")
-    // WHY JSONB?
-    // Alert payloads differ per source (Prometheus vs Datadog vs custom).
-    // We store the raw JSON so we never lose data, even if our schema doesn't model a field.
-    // PostgreSQL JSONB: binary JSON with indexing support. Better than TEXT for JSON.
-    // Interview: "When would you use JSONB in PostgreSQL?" → Semi-structured data with varying schema
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "raw_payload", columnDefinition = "jsonb")
+    // WHY @JdbcTypeCode(SqlTypes.JSON)?
+    // Hibernate 6 (Spring Boot 3) requires this annotation to correctly map a
+    // Java String to a PostgreSQL JSONB column. Without it, Hibernate sends a
+    // plain VARCHAR — PostgreSQL rejects it with "column is of type jsonb but
+    // expression is of type character varying".
+    // This is the official Hibernate 6 approach — replaces the old custom UserType.
+    // WHY JSONB over TEXT?
+    // JSONB = binary JSON with GIN index support → fast field-level queries.
+    // TEXT = no JSON awareness → must parse on every query.
     private String rawPayload;
 
     @CreatedDate

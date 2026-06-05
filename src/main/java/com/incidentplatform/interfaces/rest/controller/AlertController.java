@@ -1,10 +1,10 @@
 package com.incidentplatform.interfaces.rest.controller;
 
 import com.incidentplatform.application.dto.request.CreateAlertRequest;
-import com.incidentplatform.application.dto.response.AlertResponse;
 import com.incidentplatform.application.dto.response.IncidentResponse;
 import com.incidentplatform.application.service.IncidentService;
 import com.incidentplatform.domain.enums.IncidentStatus;
+import com.incidentplatform.infrastructure.messaging.kafka.producer.AlertEventProducer;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -16,6 +16,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -46,25 +47,41 @@ import java.util.UUID;
 public class AlertController {
 
     private final IncidentService incidentService;
+    private final AlertEventProducer alertEventProducer;
 
     /**
-     * POST /api/v1/alerts — Receive an alert from a monitoring system.
+     * POST /api/v1/alerts — Receive an alert and publish to Kafka.
      *
-     * WHY POST and not PUT?
-     * POST = create a new resource (you don't know the ID yet)
-     * PUT = create or replace a resource at a specific URL (you know the ID)
-     * Alert ingestion = POST. HTTP semantics matter.
+     * WHY return 202 Accepted and not 201 Created?
+     * 202 = "I received your request and will process it asynchronously"
+     * 201 = "I created the resource right now"
+     * Since alert → Kafka → incident creation happens async, 202 is semantically correct.
+     * Client gets an instant response without waiting for DB operations.
      *
-     * WHY @Valid?
-     * Triggers Bean Validation on the request body.
-     * Without @Valid: @NotBlank, @Size annotations do nothing.
-     * With @Valid: violations throw MethodArgumentNotValidException → caught by GlobalExceptionHandler.
+     * This is the key benefit of event-driven architecture:
+     * No matter how long processing takes (DB slow, Kafka lag), the API response is instant.
+     *
+     * WHY return a Map with correlationId?
+     * Client needs a way to track this alert's processing.
+     * They can use correlationId to query logs, search incidents, or poll for status.
+     * This is the ACCEPTED REQUEST pattern in async APIs.
      */
     @PostMapping("/alerts")
-    @Operation(summary = "Ingest an alert", description = "Receives an alert from monitoring systems and creates/links to an incident")
-    public ResponseEntity<AlertResponse> ingestAlert(@Valid @RequestBody CreateAlertRequest request) {
-        AlertResponse response = incidentService.processAlert(request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    @Operation(summary = "Ingest an alert",
+            description = "Validates the alert and publishes to Kafka. Incident creation is async. Returns 202 Accepted immediately.")
+    public ResponseEntity<Map<String, String>> ingestAlert(
+            @Valid @RequestBody CreateAlertRequest request) {
+
+        alertEventProducer.publishAlertCreatedEvent(request);
+
+        return ResponseEntity
+                .status(HttpStatus.ACCEPTED)  // 202 — processing will happen async
+                .body(Map.of(
+                        "status", "ACCEPTED",
+                        "message", "Alert received and queued for processing",
+                        "service", request.serviceName(),
+                        "severity", request.severity().name()
+                ));
     }
 
     /**

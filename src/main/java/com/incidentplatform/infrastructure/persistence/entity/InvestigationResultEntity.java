@@ -5,6 +5,7 @@ import lombok.*;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -56,8 +57,13 @@ public class InvestigationResultEntity {
     @Column(name = "reasoning", columnDefinition = "TEXT")
     private String reasoning;  // Chain-of-thought from the LLM
 
-    @Column(name = "confidence_score")
-    private Float confidenceScore;  // 0.0 - 1.0
+    @Column(name = "confidence_score", precision = 3, scale = 2)
+    private BigDecimal confidenceScore;  // 0.00 - 1.00
+    // WHY BigDecimal and not Float?
+    // DECIMAL(3,2) in PostgreSQL = NUMERIC type → maps to BigDecimal in Java.
+    // Float maps to float4 — a DIFFERENT type. Schema validation would fail.
+    // Also: BigDecimal is EXACT. Float has binary rounding errors (0.1+0.2 ≠ 0.3).
+    // Always use BigDecimal for scores, percentages, financial values.
 
     @Column(name = "execution_time_ms")
     private Long executionTimeMs;   // How long the agent took — for observability
