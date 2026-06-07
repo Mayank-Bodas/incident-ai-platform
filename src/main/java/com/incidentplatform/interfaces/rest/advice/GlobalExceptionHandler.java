@@ -136,6 +136,20 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
+    // ==================== 401 Unauthorized ====================
+    @ExceptionHandler(org.springframework.security.core.AuthenticationException.class)
+    public ProblemDetail handleAuthenticationException(org.springframework.security.core.AuthenticationException ex) {
+        log.warn("Authentication failed: {}", ex.getMessage());
+
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.UNAUTHORIZED,
+                ex.getMessage()
+        );
+        problem.setTitle("Unauthorized");
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
     // ==================== 500 Internal Server Error ====================
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleGenericException(Exception ex) {
