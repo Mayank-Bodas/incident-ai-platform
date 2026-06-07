@@ -244,7 +244,7 @@ CREATE INDEX idx_knowledge_docs_text ON knowledge_documents
 INSERT INTO users (email, password_hash, first_name, last_name, role)
 VALUES (
     'admin@incidentplatform.com',
-    '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewjFzDZ/GtyLhFau',
+    '$2a$12$TnBfNkp1ma/E42ySXi0ZLeB/WI8UVEJpKmxoHOdBkZoDIVBUaFJfW',
     'Admin',
     'User',
     'ROLE_ADMIN'
